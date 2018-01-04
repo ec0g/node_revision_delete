@@ -1,6 +1,6 @@
 {
   "name": "ec0g/node_revision_delete",
-  "description" : "Forked D8 version of the drupal/node_revision_delete module as of 8.x-1.x, issue 2911844"
+  "description" : "Forked D8 version of the drupal/node_revision_delete module as of 8.x-1.x, issue 2911844",
   "type": "drupal-module",
   "license" : "GPL-2.0+",
   "homepage" : "https://drupal.org/project/advagg"
