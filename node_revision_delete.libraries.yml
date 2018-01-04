@@ -1,0 +1,14 @@
+admin_settings:
+  version: 1.0.0
+  css:
+    theme:
+      css/node_revision_delete.css: {}
+
+content_types:
+  version: 1.0.0
+  js:
+    js/content_types.js: {}
+  dependencies:
+    - core/jquery
+    - core/drupal
+    - core/drupal.form

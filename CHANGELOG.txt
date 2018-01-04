@@ -1,0 +1,67 @@
+Node Revision Delete 8.1.0-beta1, 201X-XX-XX
+--------------------------------------------
+Changes since 8.1.0-alpha3:
+
+- #2927935 by adriancid: Data types in @param tags need to be fully namespaced.
+- #2927930 by adriancid: Remove validateForm() useless method overriding in
+  NodeRevisionDeleteAdminSettings configuration form.
+- #2925354 by adriancid: Remove the functionalities that allows to see the drush
+  commands in the module help page.
+- #2924488 by adriancid: Incorrect class property description in
+  ContentTypeConfigurationDeleteForm class.
+- #2924486 by adriancid: Replace deprecated usage of Drupal::entityManager with
+  a Drupal::entityTypeManager.
+- #2921622 by adriancid: Change the placeholder @variable to :variable for urls
+  in t() calls.
+- #2913006 by adriancid: Define how many revisions you want to delete per cron
+  run with a number form element.
+
+Node Revision Delete 8.1.0-alpha3, 2017-09-12
+---------------------------------------------
+Changes since 8.1.0-alpha2:
+
+- #2908345 by adriancid: Change the permission name in the module help page.
+- #2907680 by adriancid: Add the sticky property to the table shown in the
+  admin page.
+- #2900979 by adriancid: Untranslated strings.
+- #2900518 by adriancid: Drush command to configure time options for the minimum
+  age to delete revisions.
+- #2899740 by adriancid: Drush command to configure time options to know when 
+  the revision should be deleted.
+- #2899066 by adriancid: Drush command to configure frequency with which to
+  delete revisions while cron is running
+- #2846726 by proconnor15, adriancid: Add option to delete revisions every 2
+  years while cron runs.
+- #2895498 by adriancid: Drush command to get the last time that the node 
+  revision delete was made.
+- #2892502 by adriancid: Validate that the parameters exists before use it in
+  array_unshift() function.
+- #2892441 by adriancid: Change the drush error codes.
+- by adriancid: Add a dry-run option. 
+- by adriancid: Change drush ndr-delete-cron-run command name to
+  nrd-delete-cron-run.
+- by adriancid: Create an option group in the content type edit form.
+- by adriancid: Create the CHANGELOG.txt file.
+- by adriancid: Disable the 'Delete revisions now' option if there not exists
+  candidates nodes with revisions to delete.
+
+Node Revision Delete 8.1.0-alpha2, 2017-05-03
+---------------------------------------------
+Changes since 8.1.0-alpha1:
+
+- by adriancid: Drush command to configure how many revisions delete per cron
+  run.
+- by adriancid: Drush command to get how many revisions will be deleted per
+  cron run.
+- by adriancid: Add link to configure page.
+- by adriancid: Keep revisions during a certain time.
+- by adriancid: Delete revision by life time.
+- by adriancid: Update the settings and schema files.
+- by adriancid: Add a config variable to configure the time for the
+  'when_to_delete' and 'minimun_age_to_delete' variables.
+- by adriancid: Add a config variable to configure the minimum_revisions_to_keep
+  variable.
+
+Node Revision Delete 8.1.0-alpha1, 2017-04-19
+---------------------------------------------
+- Initial release.

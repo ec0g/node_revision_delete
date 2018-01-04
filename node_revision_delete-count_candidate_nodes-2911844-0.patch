@@ -1,0 +1,531 @@
+diff --git a/src/Form/NodeRevisionDeleteAdminSettings.php b/src/Form/NodeRevisionDeleteAdminSettings.php
+index fbaf927..66f06c0 100644
+--- a/src/Form/NodeRevisionDeleteAdminSettings.php
++++ b/src/Form/NodeRevisionDeleteAdminSettings.php
+@@ -5,6 +5,7 @@ namespace Drupal\node_revision_delete\Form;
+ use Drupal\Core\Form\ConfigFormBase;
+ use Drupal\Core\Form\FormStateInterface;
+ use Drupal\Core\Render\RendererInterface;
++use Drupal\node_revision_delete\RevisionQuery;
+ use Symfony\Component\DependencyInjection\ContainerInterface;
+ use Drupal\Core\Url;
+ use Drupal\Core\Entity\EntityTypeManagerInterface;
+@@ -42,9 +43,7 @@ class NodeRevisionDeleteAdminSettings extends ConfigFormBase {
+    * {@inheritdoc}
+    */
+   public static function create(ContainerInterface $container) {
+-    return new static(
+-      $container->get('renderer'), $container->get('entity_type.manager')
+-    );
++    return new static($container->get('renderer'), $container->get('entity_type.manager'));
+   }
+ 
+   /**
+@@ -84,12 +83,14 @@ class NodeRevisionDeleteAdminSettings extends ConfigFormBase {
+     // Getting the config variables.
+     $node_revision_delete_track = $config->get('node_revision_delete_track');
+     // Looking for all the content types.
+-    $content_types = $this->entityTypeManager->getStorage('node_type')->loadMultiple();
++    $content_types = $this->entityTypeManager->getStorage('node_type')
++      ->loadMultiple();
+     // Check if exists candidates nodes.
+     $exists_candidates_nodes = FALSE;
+ 
+     // Return to the same page after save the content type.
+-    $destination = Url::fromRoute('node_revision_delete.admin_settings')->toString();
++    $destination = Url::fromRoute('node_revision_delete.admin_settings')
++      ->toString();
+     $destination_options = [
+       'query' => ['destination' => $destination],
+       'fragment' => 'edit-workflow',
+@@ -123,7 +124,11 @@ class NodeRevisionDeleteAdminSettings extends ConfigFormBase {
+         $when_to_delete = (bool) $when_to_delete_number ? _node_revision_delete_time_string('when_to_delete', $when_to_delete_number) : $this->t('Always delete');
+ 
+         // Number of candidates nodes to delete theirs revision.
+-        $candidate_nodes = count(_node_revision_delete_candidates($content_type->id(), $minimum_revisions_to_keep, $minimum_age_to_delete_number, $when_to_delete_number));
++        //@todo: The DateTime class here should receive a format it understands from somwewhere else. This wll give us a range of flexibility to use time formats other than months ago.
++        $rev_recency = is_numeric($minimum_age_to_delete_number) && intval($minimum_age_to_delete_number) > 0 ? new \DateTime($minimum_age_to_delete_number . ' months ago') : NULL;
++        $skip_nodes_more_recently_modified_than = is_numeric($when_to_delete_number) && intval($when_to_delete_number) > 0 ? new \DateTime($when_to_delete_number . ' months ago') : NULL;
++        $reqQuery = new RevisionQuery($content_type, $minimum_revisions_to_keep, $rev_recency, $skip_nodes_more_recently_modified_than);
++        $candidate_nodes = $reqQuery->countAffectedNodes();
+         // If we have candidates nodes then we will allow to run the batch job.
+         if ($candidate_nodes && !$exists_candidates_nodes) {
+           $exists_candidates_nodes = TRUE;
+diff --git a/src/RevisionQuery.php b/src/RevisionQuery.php
+new file mode 100644
+index 0000000..80f6606
+--- /dev/null
++++ b/src/RevisionQuery.php
+@@ -0,0 +1,159 @@
++<?php
++/**
++ * @contains RevisionQuery.php
++ * User: goce
++ * Date: 12/20/17
++ * Time: 10:38 AM
++ */
++
++namespace Drupal\node_revision_delete;
++
++use DateTime;
++use Drupal\node\NodeTypeInterface;
++use Drupal\node_revision_delete\WorkQuery\NodeWorkQuery;
++use Drupal\node_revision_delete\WorkQuery\WorkQueryInterface;
++
++
++/**
++ * File: RevisionQuery.php
++ * Author: goce
++ * Created:  2017.12.20
++ *
++ * Description:
++ */
++class RevisionQuery implements RevisionQueryInterface {
++
++  /** @var string */
++  protected $type;
++
++  /** @var int */
++  protected $minRev;
++
++  /** @var \DateTime */
++  protected $minRetainAge;
++
++  /** @var \DateTime */
++  protected $nodeInactivityAge;
++
++  /** @var \Drupal\node_revision_delete\WorkQuery\WorkQueryInterface */
++  protected $nodeQuery;
++
++  /** @var \Drupal\node_revision_delete\WorkQuery\WorkQueryInterface */
++  protected $revQuery;
++
++  /**
++   * RevisionQuery constructor.
++   *
++   * @param \Drupal\node\NodeTypeInterface $content_type
++   * @param int                            $revision_items_to_keep
++   * @param \DateTime|NULL                 $revision_history_to_retain
++   * @param \DateTime|NULL                 $nodeInactivityAge
++   *   Nodes modified after this datetime will be filtered out and skipped. Null means the node age filter will not be applied and all nodes will be considered.
++   */
++  public function __construct(NodeTypeInterface $content_type, $revision_items_to_keep, DateTime $revision_history_to_retain = NULL, DateTime $nodeInactivityAge = NULL) {
++
++    $this->setType($content_type->id());
++    $this->setMinRetainRev($revision_items_to_keep);
++    $this->setMinRetainAge($revision_history_to_retain);
++    $this->setInactivityAge($nodeInactivityAge);
++
++    $this->nodeQuery = NodeWorkQuery::create()
++      ->setQuery($this->type, $this->minRev, $this->minRetainAge, $this->nodeInactivityAge);
++  }
++
++  /**
++   * Sets the minimum age to retain for a revision. If NULL then the filter is not applied.
++   *
++   * This means that revisions older than the specified DateTime will be deleted.
++   *
++   * @param \DateTime|NULL $min_age_to_keep
++   *    Revisions older than this date will be removed. A NULL means that this filter will not be applied.
++   *
++   * @return \Drupal\node_revision_delete\RevisionQueryInterface
++   */
++  public function setMinRetainAge(DateTime $min_age_to_keep = NULL) {
++    $this->minRetainAge = $min_age_to_keep;
++
++    return $this;
++  }
++
++  public function setInactivityAge(DateTime $nodeInactivityAge = NULL) {
++    $this->nodeInactivityAge = $nodeInactivityAge;
++
++    return $this;
++  }
++
++  /**
++   * The Node type.
++   *
++   * @param string $content_type
++   *    The node bundle. Ex. article,basic_page
++   *
++   * @return \Drupal\node_revision_delete\RevisionQuery
++   */
++  public function setType($content_type) {
++    // @todo: should add type validation? If the bundle doesn't exist then no harm no foul.
++    $this->type = $content_type;
++
++    return $this;
++  }
++
++  /**
++   * Sets the minimum number of revisions for each node to retain. This value will always be equal to, or greater than 1.
++   *
++   * Invalid values are ignored. This function can be chained.
++   *
++   * @param int $minimum_revisions_to_keep
++   *    The minimum number of revisions to keep for each node.
++   *
++   * @return \Drupal\node_revision_delete\RevisionQueryInterface
++   */
++  public function setMinRetainRev($minimum_revisions_to_keep) {
++    if (is_numeric($minimum_revisions_to_keep) && $minimum_revisions_to_keep >= 1) {
++      $this->minRev = $minimum_revisions_to_keep;
++    }
++
++    return $this;
++  }
++
++  /**
++   * {@inheritdoc}
++   */
++  public function countAffectedNodes() {
++    return $this->nodeQuery->count();
++  }
++
++  public function countRemovableRevisions() {
++    return $this->revQuery->count();
++  }
++
++  /**
++   * {@inheritdoc}
++   */
++  public function fetchRemovableRevisions() {
++    // TODO: Implement fetchRemovable() method.
++  }
++
++
++  /**
++   * @param array $options
++   *
++   * @return \Drupal\Core\Database\Query\SelectInterface
++   */
++  protected function query(array $options) {
++    /** @var \Drupal\Core\Database\Query\SelectInterface $query */
++    $query = $this->connection->select('node', 'n');
++    $query->addField('n', 'nid');
++    $query->addField('r', 'vid');
++    $query->addExpression('COUNT(n.nid)', 'num_revisions');
++    $query->join('node_revision', 'r', 'n.nid=r.nid');
++    $query->condition('n.type', $this->type);
++    //$query->groupBy('n.nid');
++
++    // couldn't use here havingCondition and couldn't use the num_revisions alias. May be an ORM issue.
++    $query->having('COUNT(n.nid) > :min_retain_revisions', [':min_retain_revisions' => $this->minRev]);
++
++    return $query;
++  }
++
++}
+\ No newline at end of file
+diff --git a/src/RevisionQueryInterface.php b/src/RevisionQueryInterface.php
+new file mode 100644
+index 0000000..6b1f997
+--- /dev/null
++++ b/src/RevisionQueryInterface.php
+@@ -0,0 +1,34 @@
++<?php
++/**
++ * @contains RevisionQueryInterface.php
++ * User: goce
++ * Date: 12/20/17
++ * Time: 10:38 AM
++ */
++
++namespace Drupal\node_revision_delete;
++
++
++interface RevisionQueryInterface {
++
++  /**
++   * Counts the number of node entities that have revision records that could be removed.
++   *
++   * @return int
++   */
++  public function countAffectedNodes();
++
++  /**
++   * Returns the number of records to be removed.
++   *
++   * @return int
++   */
++  public function countRemovableRevisions();
++
++  /**
++   * Returns the list of revision records that could be removed.
++   *
++   * @return array
++   */
++  public function fetchRemovableRevisions();
++}
+\ No newline at end of file
+diff --git a/src/WorkQuery/BaseWorkQuery.php b/src/WorkQuery/BaseWorkQuery.php
+new file mode 100644
+index 0000000..891dbf2
+--- /dev/null
++++ b/src/WorkQuery/BaseWorkQuery.php
+@@ -0,0 +1,45 @@
++<?php
++/**
++ * @contains BaseWorkQuery.php
++ * User: goce
++ * Date: 12/21/17
++ * Time: 10:54 AM
++ */
++
++namespace Drupal\node_revision_delete\WorkQuery;
++
++use DateTime;
++
++
++/**
++ * File: BaseWorkQuery.php
++ * Author: goce
++ * Created:  2017.12.21
++ *
++ * Description:
++ */
++abstract class BaseWorkQuery implements WorkQueryInterface {
++
++  /** @var \Drupal\Core\Database\Query\SelectInterface */
++  protected $query;
++
++  /** @var \Drupal\Core\Database\Connection */
++  protected $connection;
++
++  /** @var string */
++  protected $type;
++
++  /** @var int */
++  protected $minRev;
++
++  /** @var \DateTime */
++  protected $minRetainAge;
++
++  protected function __construct() {
++    $this->connection = \Drupal::service('database');
++  }
++
++  public static function create() {
++    return new static();
++  }
++}
+\ No newline at end of file
+diff --git a/src/WorkQuery/NodeWorkQuery.php b/src/WorkQuery/NodeWorkQuery.php
+new file mode 100644
+index 0000000..ae970e2
+--- /dev/null
++++ b/src/WorkQuery/NodeWorkQuery.php
+@@ -0,0 +1,126 @@
++<?php
++/**
++ * @contains NodeWorkQuery.php
++ * User: goce
++ * Date: 12/21/17
++ * Time: 10:53 AM
++ */
++
++namespace Drupal\node_revision_delete\WorkQuery;
++
++use DateTime;
++
++/**
++ * Class NodeWorkQuery
++ *
++ * @package Drupal\node_revision_delete\WorkQuery
++ */
++class NodeWorkQuery extends BaseWorkQuery {
++
++  /**
++   * Constructs a complicated query with several subqueries. There is one query that constructs a derived table which filters out nodes based on bundle and the number of revisions
++   * for each node we want to retain. This was done so that no mater what we always retain a minimum number of revisions. There is also an outer query we may use
++   * if we want to filter out node revisions based on their age.
++   *
++   * This is an example query that may be produced:
++   *
++   * # trim nodes by the minimum revision age filter.
++   * SELECT rv.nid,rv.vid
++   * FROM node_revision rv
++   * JOIN
++   * (
++   * # trim nodes by the number of revisions for each node first
++   * SELECT n.nid AS nid, COUNT(n.nid) AS num_revisions
++   * FROM node n
++   * INNER JOIN node_revision r ON n.nid=r.nid
++   * WHERE (n.type = 'article')
++   * GROUP BY n.nid
++   * HAVING (COUNT(n.nid) > 3)
++   * ) trimmed
++   * ON trimmed.nid=rv.nid
++   * WHERE rv.revision_timestamp < 1511405964
++   *
++   * {@inheritdoc}
++   */
++  public function setQuery($type, $minimum_revisions_to_keep, DateTime $min_rev_age_to_keep = NULL, DateTime $min_node_inactivity_age = NULL) {
++    $subQuery = $this->countRevisionSubQuery($type, $minimum_revisions_to_keep, $min_node_inactivity_age);
++    // initially set the revision count query as the main query. It may become a subquery
++    $this->query = $subQuery;
++
++    if ($min_rev_age_to_keep) {
++      $outerQuery = $this->connection->select('node_revision', 'rv');
++      $outerQuery->fields('rv', ['nid', 'vid']);
++      $outerQuery->join($subQuery, 'trimmed', 'trimmed.nid=rv.nid');
++      $outerQuery->condition('rv.revision_timestamp', $min_rev_age_to_keep->format('U'), '<');
++      $outerQuery->groupBy('rv.nid');
++      $this->query = $outerQuery;
++    }
++
++    return $this;
++  }
++
++  /**
++   * Marking as private. The table aliases in this query are defined in the main query.
++   *
++   * Note: This query operates on a node's CURRENT revision, which may not necessarily be a node's most recent revision.
++   *
++   * @return \Drupal\Core\Database\Query\SelectInterface
++   */
++  private function currentRevisionTimeStampSubQuery() {
++    /** @var \Drupal\Core\Database\Query\SelectInterface $subQuery */
++    $subQuery = $this->connection->select('node_revision', 'r2');
++    $subQuery->addField('r2', 'revision_timestamp');
++    $subQuery->where('r2.vid = n.vid');
++    //$subQuery->orderBy('r2.revision_timestamp', 'DESC');
++    //$subQuery->range(0, 1);
++    return $subQuery;
++
++  }
++
++  /**
++   * Constructs a query that returns all the nids and their current vid based on the bundle, and the minimum revision count.
++   *
++   * @param           $type
++   * @param           $minimum_revisions_to_keep
++   * @param \DateTime $min_node_inactivity_age
++   *
++   * @return \Drupal\Core\Database\Query\SelectInterface
++   */
++  private function countRevisionSubQuery($type, $minimum_revisions_to_keep, DateTime $min_node_inactivity_age = NULL) {
++    /** @var \Drupal\Core\Database\Query\SelectInterface $query */
++    $query = $this->connection->select('node', 'n');
++    $query->addField('n', 'nid');
++    //$query->addField('n', 'vid');
++    $query->addExpression('COUNT(n.nid)', 'num_revisions');
++    $query->join('node_revision', 'r', 'n.nid=r.nid');
++    $query->condition('n.type', $type);
++
++    if ($min_node_inactivity_age instanceof DateTime) {
++      // Construct a WHERE clause to filter out nodes more recent than the $min_rev_age_to_keep. Constructs a WHERE with a SELECT subquery on the CURRENT revision.
++      $query->condition($min_node_inactivity_age->format('U'), $this->currentRevisionTimeStampSubQuery(), '>');
++    }
++
++    $query->groupBy('n.nid');
++    // couldn't use here havingCondition and couldn't use the num_revisions alias.
++    $query->having('COUNT(n.nid) > :min_retain_revisions', [':min_retain_revisions' => $minimum_revisions_to_keep]);
++
++    return $query;
++  }
++
++  /**
++   * {@inheritdoc}
++   */
++  public function count() {
++    return $this->query->countQuery()
++      ->execute()
++      ->fetchField();
++  }
++
++  /**
++   * {@inheritdoc}
++   */
++  public function fetchRecords() {
++    return $this->query->execute()
++      ->fetchAll();
++  }
++}
+diff --git a/src/WorkQuery/RevisionWorkQuery.php b/src/WorkQuery/RevisionWorkQuery.php
+new file mode 100644
+index 0000000..e507cb0
+--- /dev/null
++++ b/src/WorkQuery/RevisionWorkQuery.php
+@@ -0,0 +1,34 @@
++<?php
++/**
++ * @contains RevisionWorkQuery.php
++ * User: goce
++ * Date: 12/21/17
++ * Time: 3:33 PM
++ */
++
++namespace Drupal\node_revision_delete\WorkQuery;
++
++use DateTime;
++
++
++/**
++ * File: RevisionWorkQuery.php
++ * Author: goce
++ * Created:  2017.12.21
++ *
++ * Description:
++ */
++class RevisionWorkQuery extends BaseWorkQuery {
++
++  public function setQuery($type, $minRevRetain, DateTime $minAgeRetain) {
++    // TODO: Implement setQuery() method.
++  }
++
++  public function count() {
++    // TODO: Implement count() method.
++  }
++
++  public function fetchRecords() {
++    // TODO: Implement fetchRecords() method.
++  }
++}
+\ No newline at end of file
+diff --git a/src/WorkQuery/WorkQueryInterface.php b/src/WorkQuery/WorkQueryInterface.php
+new file mode 100644
+index 0000000..4dc87c3
+--- /dev/null
++++ b/src/WorkQuery/WorkQueryInterface.php
+@@ -0,0 +1,39 @@
++<?php
++/**
++ * @contains WorkQueryInterface.php
++ * User: goce
++ * Date: 12/21/17
++ * Time: 10:51 AM
++ */
++
++namespace Drupal\node_revision_delete\WorkQuery;
++
++
++use DateTime;
++
++interface WorkQueryInterface {
++
++  /**
++   * @return int
++   */
++  public function count();
++
++  /**
++   * @return array
++   */
++  public function fetchRecords();
++
++  /**
++   * @param string    $type
++   * @param int       $minRevRetain
++   * @param \DateTime $minAgeRetain
++   *   Skip revisions created before this DateTime.
++   *
++   * @param \DateTime $minNodeInactivityAge
++   *   Skip nodes altogether whose most recent revision is after this variable's value.
++   *
++   * @return \Drupal\node_revision_delete\WorkQuery\WorkQueryInterface
++   *   Returns an instance of the object for convenient chaining.
++   */
++  public function setQuery($type, $minRevRetain, DateTime $minAgeRetain = NULL, DateTime $minNodeInactivityAge = NULL);
++}
+\ No newline at end of file

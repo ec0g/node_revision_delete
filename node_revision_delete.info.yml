@@ -1,0 +1,10 @@
+name: Node Revision Delete
+description: Track and prune node revisions.
+package: Content
+
+type: module
+core: 8.x
+
+configure: node_revision_delete.admin_settings
+
+php: 5.6
